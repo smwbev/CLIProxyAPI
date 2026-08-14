@@ -1,0 +1,60 @@
+name: sync upstream
+
+# Тянет свежие коммиты и ТЕГИ из router-for-me/CLIProxyAPI.
+#
+# Теги здесь не менее важны, чем коммиты: hutch собирает прокси по последнему
+# тегу этого форка (`gh api repos/smwbev/CLIProxyAPI/tags`). Если синхронизировать
+# только ветку, версия в сборке замирает на последнем известном теге — ровно это
+# и случилось: форк стоял на v7.2.116, когда апстрим ушёл на v7.2.131.
+#
+# Остальные workflow апстрима в форке отключены намеренно (они публиковали бы
+# релизы и образы от нашего имени). Этот — наш, его отключать не надо.
+
+on:
+  schedule:
+    # каждый день в 20:30 UTC (03:30 по Бангкоку) — до ночной пересборки hutch
+    - cron: '30 20 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Синхронизация с апстримом
+        run: |
+          set -eu
+          git remote add upstream https://github.com/router-for-me/CLIProxyAPI.git
+          git fetch upstream main --tags
+
+          before_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "нет")
+          behind=$(git rev-list --count HEAD..upstream/main)
+          echo "отставание: $behind коммитов, текущий тег: $before_tag"
+
+          if [ "$behind" -eq 0 ]; then
+            echo "коммиты уже свежие"
+          else
+            # --ff-only намеренно: если форк разошёлся с апстримом, лучше упасть
+            # и разобраться руками, чем получить merge-коммит в чужой истории.
+            git merge --ff-only upstream/main
+            git push origin main
+          fi
+
+          # Теги пушим всегда: они могли появиться и без новых коммитов в main
+          git push origin --tags
+
+          after_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "нет")
+          {
+            echo "### Синхронизация с апстримом"
+            echo ""
+            echo "- было коммитов позади: $behind"
+            echo "- тег до: \`$before_tag\`"
+            echo "- тег после: \`$after_tag\`"
+          } >> "$GITHUB_STEP_SUMMARY"
