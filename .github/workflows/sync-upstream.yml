@@ -1,14 +1,19 @@
 name: sync upstream
 
-# Тянет свежие коммиты и ТЕГИ из router-for-me/CLIProxyAPI.
+# Тянет из router-for-me/CLIProxyAPI прежде всего ТЕГИ, и лишь затем — ветку main.
 #
-# Теги здесь не менее важны, чем коммиты: hutch собирает прокси по последнему
-# тегу этого форка (`gh api repos/smwbev/CLIProxyAPI/tags`). Если синхронизировать
-# только ветку, версия в сборке замирает на последнем известном теге — ровно это
-# и случилось: форк стоял на v7.2.116, когда апстрим ушёл на v7.2.131.
+# Почему теги важнее ветки: hutch собирает прокси клонированием ПО ТЕГУ
+# (`git clone --branch <тег>`), а нужный тег выбирает по списку тегов этого форка.
+# Содержимое ветки main на сборку не влияет вообще. Пока теги не приезжали,
+# версия в сборке стояла на v7.2.116, хотя апстрим ушёл на v7.2.131.
 #
-# Остальные workflow апстрима в форке отключены намеренно (они публиковали бы
-# релизы и образы от нашего имени). Этот — наш, его отключать не надо.
+# main синхронизируется обычным merge, а не --ff-only: в форке лежит этот самый
+# workflow, то есть ветка заведомо разошлась с апстримом и fast-forward невозможен
+# по определению. Неудача на этом шаге не валит job — теги к тому моменту уже
+# отправлены, а сборке больше ничего и не нужно.
+#
+# Остальные workflow апстрима в форке отключены намеренно: они публиковали бы
+# релизы и образы от нашего имени. Этот — наш, его отключать не надо.
 
 on:
   schedule:
@@ -28,33 +33,41 @@ jobs:
           fetch-depth: 0
           ref: main
 
-      - name: Синхронизация с апстримом
+      - name: Теги из апстрима
+        id: tags
         run: |
           set -eu
           git remote add upstream https://github.com/router-for-me/CLIProxyAPI.git
           git fetch upstream main --tags
 
-          before_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "нет")
-          behind=$(git rev-list --count HEAD..upstream/main)
-          echo "отставание: $behind коммитов, текущий тег: $before_tag"
-
-          if [ "$behind" -eq 0 ]; then
-            echo "коммиты уже свежие"
-          else
-            # --ff-only намеренно: если форк разошёлся с апстримом, лучше упасть
-            # и разобраться руками, чем получить merge-коммит в чужой истории.
-            git merge --ff-only upstream/main
-            git push origin main
-          fi
-
-          # Теги пушим всегда: они могли появиться и без новых коммитов в main
+          before=$(git tag | wc -l | tr -d ' ')
           git push origin --tags
+          after=$(git ls-remote --tags origin | grep -cv '\^{}' || echo 0)
 
-          after_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "нет")
+          latest=$(git tag --sort=-v:refname | head -1)
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "тегов локально: $before, в origin после push: $after, последний: $latest"
+
+      - name: Ветка main (не критично)
+        continue-on-error: true
+        run: |
+          set -eu
+          behind=$(git rev-list --count HEAD..upstream/main)
+          if [ "$behind" -eq 0 ]; then
+            echo "main уже свежий"
+            exit 0
+          fi
+          echo "main отстаёт на $behind коммитов, сливаю"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git merge upstream/main --no-edit
+          git push origin main
+
+      - name: Итог
+        run: |
           {
             echo "### Синхронизация с апстримом"
             echo ""
-            echo "- было коммитов позади: $behind"
-            echo "- тег до: \`$before_tag\`"
-            echo "- тег после: \`$after_tag\`"
+            echo "- последний тег: \`${{ steps.tags.outputs.latest }}\`"
+            echo "- именно он попадёт в следующую сборку hutch"
           } >> "$GITHUB_STEP_SUMMARY"
