@@ -28,6 +28,8 @@ on:
     - cron: '0 18 * * *'
   workflow_dispatch:
 
+# contents: write otnositsya k GITHUB_TOKEN. Dlya tegov ego NE hvataet — sm.
+# kommentariy u shaga checkout nizhe.
 permissions:
   contents: write
 
@@ -35,10 +37,36 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
+      # Tokenom dlya pusha beretsya SYNC_TOKEN, esli on zadan v sekretah repozitoriya,
+      # inache — obychnyy GITHUB_TOKEN. actions/checkout propisyvaet peredannyy
+      # token v lokalnyy git-konfig, poetomu oba push nizhe idut pod nim.
+      #
+      # Zachem otdelnyy token. GITHUB_TOKEN ne mozhet pravit fayly v
+      # .github/workflows: takogo klyucha net v spiske permissions, i actions:
+      # write ego ne zamenyaet. Ogranichenie namerennoe, chtoby Actions ne
+      # perepisyvali sami sebya. Kak tolko apstrim trogaet svoi workflow, teg,
+      # kotoryy tyanet za soboy etot kommit, otklonyaetsya s oshibkoy:
+      #
+      #   ! [remote rejected] v7.3.7 -> v7.3.7 (refusing to allow a GitHub App
+      #     to create or update workflow `.github/workflows/release.yaml`
+      #     without `workflows` permission)
+      #
+      # Otklonyaetsya pri etom ne tolko etot teg, no i vse posleduyushchie: 17 i
+      # 18.09.2026 fork tak i zastryal na v7.3.6, poka apstrim ushel na v7.3.8.
+      # Sborka hutch pri etom ostavalas zelenoy — ona chestno zhdet 20 minut,
+      # potom sobiraet to, chto est, i pishet preduprezhdenie, kotoroe nikto
+      # ne chitaet. Dve versii propustili imenno tak.
+      #
+      # SYNC_TOKEN — fine-grained PAT na etot repozitoriy:
+      #   Contents: Read and write, Workflows: Read and write, Metadata: Read
+      #
+      # Poka sekret ne zadan, vyrazhenie daet pustuyu stroku i podstavlyaetsya
+      # github.token — povedenie ostaetsya tem zhe, chto i do etoy pravki.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: main
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
 
       - name: Теги из апстрима
         id: tags
